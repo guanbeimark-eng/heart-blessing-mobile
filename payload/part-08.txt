@@ -1,0 +1,114 @@
+== 'HOLD') {
+      for (let i = 0; i < heartParticles.length; i++) {
+        if (!heartParticles[i].detached) heartParticles[i].hold(time, beat);
+      }
+    } else if (state === 'EXPLODE') {
+      for (let i = 0; i < heartParticles.length; i++) {
+        if (!heartParticles[i].detached) heartParticles[i].updateExplosion(step);
+      }
+    } else if (state === 'ASH') {
+      // 灰色粒子仍堆在底部，只做极轻微的呼吸抖动。
+      for (let i = 0; i < heartParticles.length; i++) {
+        const p = heartParticles[i];
+        p.y += Math.sin(time * 0.0015 + p.phase) * 0.018 * step;
+      }
+    }
+
+    spawnDrips(deltaMs, time);
+    updateDrops(step);
+
+    // DARK 状态完全不绘制粒子，确保第一眼是纯黑。
+    if (state === 'DARK') return;
+
+    const sceneAlpha = state === 'ASH'
+      ? smoothstep((time - stateStartedAt) / CONFIG.ashFadeDuration)
+      : 1;
+    const floorMix = floorPinkMix(time);
+
+    drawAmbientGlow(floorMix, sceneAlpha);
+    drawFloor(time, deltaMs, floorMix, sceneAlpha);
+    drawSettledHeartParticles(time);
+
+    // 雨滴先画、爱心后画，爱心主体会保持清晰。
+    drawDrips();
+    drawHeart(time, sceneAlpha);
+    drawBlessing(time);
+  }
+
+  function activateHeart(event) {
+    if (event && event.cancelable) event.preventDefault();
+    explodeHeart();
+  }
+
+  // Pointer Events 在现代 iOS 可用；旧版 Safari 自动使用 touchstart/click 回退。
+  if ('PointerEvent' in window) {
+    canvas.addEventListener('pointerdown', activateHeart, { passive: false });
+  } else {
+    canvas.addEventListener('touchstart', activateHeart, { passive: false });
+    canvas.addEventListener('click', activateHeart, false);
+  }
+
+  window.addEventListener('keydown', (event) => {
+    const key = event.code || event.key;
+    if (key === 'Space' || key === 'Enter' || key === ' ') {
+      event.preventDefault();
+      explodeHeart();
+    }
+  });
+
+  // 防止 iPhone 的页面弹性滚动、双指缩放和长按菜单打断动画。
+  document.addEventListener('touchmove', function (event) {
+    if (event.cancelable) event.preventDefault();
+  }, { passive: false });
+  document.addEventListener('gesturestart', function (event) {
+    if (event.cancelable) event.preventDefault();
+  }, { passive: false });
+
+  let resizeTimer = 0;
+  function scheduleSceneResize(delay, force) {
+    clearTimeout(resizeTimer);
+    resizeTimer = setTimeout(function () {
+      const next = getViewportSize();
+      const orientationChanged = (next.width > next.height) !== (W > H);
+      const widthChanged = Math.abs(next.width - W) > 18;
+      const majorHeightChanged = Math.abs(next.height - H) > Math.max(120, H * 0.18);
+
+      // Safari 地址栏显隐通常只改变少量高度，不重新开始整段动画。
+      if (force || orientationChanged || widthChanged || majorHeightChanged) createScene();
+    }, typeof delay === 'number' ? delay : 160);
+  }
+
+  window.addEventListener('resize', function () {
+    scheduleSceneResize(180, false);
+  }, { passive: true });
+
+  window.addEventListener('orientationchange', function () {
+    scheduleSceneResize(360, true);
+  }, { passive: true });
+
+  if (window.visualViewport) {
+    window.visualViewport.addEventListener('resize', function () {
+      scheduleSceneResize(180, false);
+    }, { passive: true });
+  }
+
+  document.addEventListener('visibilitychange', function () {
+    lastTime = performance.now();
+    lastRenderedAt = 0;
+  });
+
+  window.addEventListener('pageshow', function () {
+    // 从微信后台或 Safari 页面缓存返回时，避免第一帧出现大幅跳动。
+    lastTime = performance.now();
+    lastRenderedAt = 0;
+    scheduleSceneResize(80, false);
+  }, { passive: true });
+
+  pinkGlowSprite = buildGlowSprite('pink');
+  grayGlowSprite = buildGlowSprite('gray');
+  createScene();
+  RAF(animate);
+})();
+</script>
+</body>
+</html>
