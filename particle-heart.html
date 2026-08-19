@@ -1,0 +1,80 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, minimum-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover" />
+  <meta name="theme-color" content="#000000" />
+  <meta name="color-scheme" content="dark" />
+  <meta name="format-detection" content="telephone=no,email=no,address=no" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <title>Particle Heart Blessing</title>
+  <style>
+    html,body{margin:0;width:100%;height:100%;overflow:hidden;background:#000;color:#d9b8d2;-webkit-text-size-adjust:100%;}
+    body{position:fixed;inset:0;display:flex;align-items:center;justify-content:center;font:13px "Kaiti SC","STKaiti","KaiTi",serif;letter-spacing:2px;}
+    #status{opacity:0;transition:opacity .5s ease;text-align:center;padding:24px;}
+    #status.show{opacity:.72;}
+  </style>
+</head>
+<body>
+  <div id="status" aria-live="polite"></div>
+  <script>
+  (function(){
+    'use strict';
+    var version='20260819-iphone-3';
+    var files=[
+      'payload/part-01.txt','payload/part-02.txt','payload/part-03.txt','payload/part-04.txt',
+      'payload/part-05.txt','payload/part-06.txt','payload/part-07.txt','payload/part-08.txt'
+    ];
+    var chunks=new Array(files.length);
+    var completed=0;
+    var stopped=false;
+    var status=document.getElementById('status');
+
+    function showError(){
+      if(stopped)return;
+      stopped=true;
+      status.textContent='页面加载失败，请刷新后重试';
+      status.className='show';
+    }
+
+    function render(){
+      if(stopped||completed!==files.length)return;
+      stopped=true;
+      var page=chunks.join('');
+      document.open('text/html','replace');
+      document.write(page);
+      document.close();
+    }
+
+    function load(index,attempt){
+      var xhr=new XMLHttpRequest();
+      xhr.open('GET',files[index]+'?v='+version,true);
+      if(xhr.overrideMimeType)xhr.overrideMimeType('text/plain; charset=utf-8');
+      xhr.timeout=12000;
+      xhr.onreadystatechange=function(){
+        if(xhr.readyState!==4||stopped)return;
+        if(xhr.status>=200&&xhr.status<300){
+          chunks[index]=xhr.responseText;
+          completed++;
+          render();
+        }else if(attempt<2){
+          setTimeout(function(){load(index,attempt+1);},350*(attempt+1));
+        }else{
+          showError();
+        }
+      };
+      xhr.onerror=function(){
+        if(stopped)return;
+        if(attempt<2)setTimeout(function(){load(index,attempt+1);},350*(attempt+1));
+        else showError();
+      };
+      xhr.ontimeout=xhr.onerror;
+      xhr.send(null);
+    }
+
+    for(var i=0;i<files.length;i++)load(i,0);
+  })();
+  </script>
+</body>
+</html>
