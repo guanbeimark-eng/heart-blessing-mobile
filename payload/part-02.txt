@@ -1,0 +1,194 @@
+ssingStartedAt = 0;
+  let lastRenderedAt = 0;
+
+  const depthBuckets = Array.from({ length: 14 }, () => []);
+  let pinkGlowSprite = null;
+  let grayGlowSprite = null;
+
+  const rand = (min, max) => Math.random() * (max - min) + min;
+  const clamp = (v, min, max) => Math.max(min, Math.min(max, v));
+  const lerp = (a, b, t) => a + (b - a) * t;
+  const smoothstep = (t) => {
+    t = clamp(t, 0, 1);
+    return t * t * (3 - 2 * t);
+  };
+
+  function getViewportSize() {
+    // visualViewport 能更准确处理 iPhone Safari 地址栏、刘海屏和横竖屏切换。
+    const viewport = window.visualViewport;
+    const width = viewport && viewport.width ? viewport.width : window.innerWidth;
+    const height = viewport && viewport.height ? viewport.height : window.innerHeight;
+    return {
+      width: Math.max(1, Math.round(width || document.documentElement.clientWidth || 1)),
+      height: Math.max(1, Math.round(height || document.documentElement.clientHeight || 1))
+    };
+  }
+
+  function getMobilePerformanceScale() {
+    if (!mobile) return 1;
+    if (!IS_IOS) return 1;
+
+    // 较旧 iPhone 与微信 WKWebView 适当降低粒子数量，优先保证能够加载和持续运行。
+    if (CPU_CORES <= 4) return IS_WECHAT ? 0.66 : 0.72;
+    return IS_WECHAT ? 0.78 : 0.84;
+  }
+
+  function chooseColor() {
+    const r = Math.random();
+    if (r < 0.07) return 0;
+    if (r < 0.34) return 1;
+    if (r < 0.68) return 2;
+    if (r < 0.88) return 3;
+    return 4;
+  }
+
+  function buildGlowSprite(type) {
+    const s = 48;
+    const c = document.createElement('canvas');
+    c.width = s;
+    c.height = s;
+    const g = c.getContext('2d');
+    const grad = g.createRadialGradient(s / 2, s / 2, 0, s / 2, s / 2, s / 2);
+
+    if (type === 'gray') {
+      grad.addColorStop(0, 'rgba(232,235,242,0.58)');
+      grad.addColorStop(0.18, 'rgba(166,171,184,0.25)');
+      grad.addColorStop(0.50, 'rgba(107,112,126,0.08)');
+      grad.addColorStop(1, 'rgba(55,58,68,0)');
+    } else {
+      grad.addColorStop(0, 'rgba(255,211,249,0.72)');
+      grad.addColorStop(0.16, 'rgba(255,117,222,0.33)');
+      grad.addColorStop(0.48, 'rgba(204,82,240,0.11)');
+      grad.addColorStop(1, 'rgba(130,44,219,0)');
+    }
+
+    g.fillStyle = grad;
+    g.fillRect(0, 0, s, s);
+    return c;
+  }
+
+  function heartEquation(t) {
+    return {
+      x: 16 * Math.pow(Math.sin(t), 3),
+      y: 13 * Math.cos(t) - 5 * Math.cos(2 * t) - 2 * Math.cos(3 * t) - Math.cos(4 * t)
+    };
+  }
+
+  function heartbeat(time) {
+    const cycle = (time * 0.00123) % 1;
+    const b1 = Math.exp(-Math.pow((cycle - 0.115) / 0.048, 2)) * 0.022;
+    const b2 = Math.exp(-Math.pow((cycle - 0.235) / 0.070, 2)) * 0.010;
+    return 1 + b1 + b2 + Math.sin(time * 0.00145) * 0.003;
+  }
+
+  function makeHeartTargets(count) {
+    const targets = new Array(count);
+
+    for (let i = 0; i < count; i++) {
+      const t = Math.random() * TAU;
+      const p = heartEquation(t);
+
+      // 约三分之一粒子集中在边缘，形成参考图中明亮而厚实的轮廓。
+      const edgeParticle = Math.random() < 0.34;
+      const fill = edgeParticle
+        ? rand(0.91, 1.035)
+        : Math.pow(Math.random(), 0.43);
+
+      const x = p.x * shapeScale * fill + rand(-1.8, 1.8);
+      const y = -p.y * shapeScale * fill + rand(-1.8, 1.8);
+
+      // 内层粒子获得更大的 Z 轴厚度；边缘粒子厚度较小，旋转时仍保留心形轮廓。
+      const safeFill = clamp(fill, 0, 1);
+      const zRadius = shapeDepth * (0.11 + 0.89 * Math.sqrt(Math.max(0, 1 - safeFill * safeFill)));
+      const z = rand(-zRadius, zRadius);
+
+      targets[i] = { x, y, z, edge: edgeParticle || fill > 0.88 };
+    }
+
+    return targets;
+  }
+
+  function project(target, beat, time) {
+    let x = target.x * beat;
+    let y = target.y * beat;
+    let z = target.z * beat;
+
+    // 绕 Y 轴旋转。
+    const cy = Math.cos(rotationY);
+    const sy = Math.sin(rotationY);
+    const rx = x * cy - z * sy;
+    const rz = x * sy + z * cy;
+    x = rx;
+    z = rz;
+
+    // 很轻的俯仰，让粒子云有立体厚度，但整体仍正对观看者。
+    const tilt = -0.025 + Math.sin(time * 0.00022) * 0.024;
+    const ct = Math.cos(tilt);
+    const st = Math.sin(tilt);
+    const ry = y * ct - z * st;
+    const rz2 = y * st + z * ct;
+    y = ry;
+    z = rz2;
+
+    const perspective = clamp(cameraDistance / (cameraDistance - z), 0.72, 1.42);
+    const depth01 = clamp((z + shapeDepth) / (shapeDepth * 2), 0, 1);
+
+    return {
+      x: centerX + x * perspective,
+      y: centerY + y * perspective,
+      z,
+      perspective,
+      depth01
+    };
+  }
+
+  function sampleFloorPoint() {
+    const angle = Math.random() * TAU;
+    const ring = Math.random() < 0.76;
+    const radius = ring
+      ? rand(0.53, 1.08)
+      : Math.sqrt(Math.random()) * 0.74;
+
+    return {
+      x: centerX + Math.cos(angle) * floorRX * radius,
+      y: floorY + Math.sin(angle) * floorRY * radius + rand(-5, 7),
+      angle,
+      radius
+    };
+  }
+
+  class HeartParticle {
+    constructor(target) {
+      this.target = target;
+
+      const start = sampleFloorPoint();
+      this.x = start.x;
+      this.y = start.y + rand(-4, 22);
+      this.vx = rand(-0.7, 0.7);
+      this.vy = rand(-1.4, 0.25);
+
+      this.accel = rand(...CONFIG.gatherAccel);
+      this.maxSpeed = rand(...CONFIG.gatherMaxSpeed);
+      this.friction = rand(0.949, CONFIG.gatherFriction);
+
+      const sizeRange = mobile ? CONFIG.heartParticleMobile : CONFIG.heartParticleDesktop;
+      this.size = rand(...sizeRange);
+      if (target.edge) this.size *= rand(1.04, 1.30);
+      if (Math.random() < 0.035) this.size *= rand(1.35, 1.65);
+
+      this.colorIndex = chooseColor();
+      this.alpha = target.edge ? rand(0.68, 1) : rand(0.38, 0.90);
+      this.phase = rand(0, TAU);
+      this.wobble = rand(0.18, 1.25);
+      this.wobbleSpeed = rand(0.0011, 0.0035);
+      this.shape = Math.random();
+      this.glow = target.edge ? Math.random() < 0.46 : Math.random() < 0.12;
+
+      // 点亮从爱心内部向轮廓扩散，每颗粒子有轻微错峰，形成“突然开花”的感觉。
+      const nx = target.x / Math.max(1, shapeScale * 16);
+      const ny = target.y / Math.max(1, shapeScale * 17);
+      this.colorDelay = clamp(Math.hypot(nx, ny) * 0.30 + rand(-0.045, 0.045), 0, 0.38);
+
+      this.arrived = false;
+      this.detached = false;
+      this.se
