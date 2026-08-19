@@ -1,0 +1,166 @@
+blessingLineDuration;
+
+    let index = 3;
+    let local = elapsed - lineWindow * 3;
+
+    if (elapsed < lineWindow * 3) {
+      index = Math.floor(elapsed / lineWindow);
+      local = elapsed - index * lineWindow;
+    }
+
+    let alpha = 1;
+    let rise = 0;
+    let scale = 1;
+
+    if (index < 3) {
+      if (local < CONFIG.blessingFadeIn) {
+        const t = smoothstep(local / CONFIG.blessingFadeIn);
+        alpha = t;
+        rise = (1 - t) * 8;
+        scale = 0.988 + t * 0.012;
+      } else if (local > lineWindow - CONFIG.blessingFadeOut) {
+        const t = smoothstep((local - (lineWindow - CONFIG.blessingFadeOut)) / CONFIG.blessingFadeOut);
+        alpha = 1 - t;
+        rise = -CONFIG.blessingRise * t;
+        scale = 1 - 0.008 * t;
+      }
+    } else {
+      const t = smoothstep(clamp(local / (CONFIG.blessingFadeIn + 120), 0, 1));
+      alpha = t;
+      rise = (1 - t) * 9;
+      scale = 0.99 + t * 0.01;
+    }
+
+    if (alpha <= 0.001) return;
+
+    ctx.save();
+    ctx.textAlign = 'left';
+    ctx.textBaseline = 'middle';
+    ctx.font = `normal ${fontSize}px "Kaiti SC", "STKaiti", "KaiTi", "楷体", "楷体_GB2312", "KaiTi_GB2312", "標楷體", "BiauKai", "DFKai-SB", "FZKai-Z03", serif`;
+    ctx.globalAlpha = alpha;
+
+    // 与爱心同步的极轻呼吸，让文字看起来属于同一套动画，而非静态标签。
+    const breath = 1 + Math.sin(time * 0.00135) * 0.003;
+    ctx.translate(x, y + rise);
+    ctx.scale(scale * breath, scale * breath);
+
+    const text = BLESSINGS[index];
+    const measured = measureSpacedText(text, letterSpacing);
+
+    // 两侧细光线与小光点，不加入任何新文案，只作为轻量装饰。
+    const ornamentGap = compactLandscape ? 7 : clamp(fontSize * 0.53, 8.2, 12);
+    const ornamentLength = compactLandscape ? 9 : clamp(fontSize * 0.86, 12, 20);
+    const leftEnd = -measured.width / 2 - ornamentGap;
+    const rightStart = measured.width / 2 + ornamentGap;
+    const ornamentAlpha = 0.20 + Math.sin(time * 0.0018) * 0.04;
+
+    const leftGradient = ctx.createLinearGradient(leftEnd - ornamentLength, 0, leftEnd, 0);
+    leftGradient.addColorStop(0, 'rgba(247,160,232,0)');
+    leftGradient.addColorStop(1, `rgba(255,205,244,${0.56 * ornamentAlpha})`);
+    ctx.strokeStyle = leftGradient;
+    ctx.lineWidth = 0.45;
+    ctx.beginPath();
+    ctx.moveTo(leftEnd - ornamentLength, 0);
+    ctx.lineTo(leftEnd, 0);
+    ctx.stroke();
+
+    const rightGradient = ctx.createLinearGradient(rightStart, 0, rightStart + ornamentLength, 0);
+    rightGradient.addColorStop(0, `rgba(255,205,244,${0.56 * ornamentAlpha})`);
+    rightGradient.addColorStop(1, 'rgba(247,160,232,0)');
+    ctx.strokeStyle = rightGradient;
+    ctx.beginPath();
+    ctx.moveTo(rightStart, 0);
+    ctx.lineTo(rightStart + ornamentLength, 0);
+    ctx.stroke();
+
+    ctx.fillStyle = `rgba(255,221,247,${0.62 * ornamentAlpha})`;
+    ctx.beginPath();
+    ctx.arc(leftEnd, 0, mobile ? 0.62 : 0.82, 0, TAU);
+    ctx.arc(rightStart, 0, mobile ? 0.62 : 0.82, 0, TAU);
+    ctx.fill();
+
+    // 更柔和的粉白渐变、较轻的描边与光晕，避免字体显得厚重。
+    ctx.shadowBlur = compactLandscape ? 4 : clamp(fontSize * 0.35, 5.3, 8.2);
+    ctx.shadowColor = 'rgba(255, 158, 231, 0.17)';
+    ctx.lineWidth = compactLandscape ? 0.28 : clamp(fontSize * 0.021, 0.30, 0.46);
+    ctx.strokeStyle = 'rgba(255, 226, 248, 0.09)';
+    paintSpacedText(measured.chars, measured.width, letterSpacing, 'stroke');
+
+    const gradient = ctx.createLinearGradient(0, -fontSize * 0.7, 0, fontSize * 0.75);
+    gradient.addColorStop(0, 'rgba(255, 253, 255, 0.97)');
+    gradient.addColorStop(0.50, 'rgba(255, 228, 248, 0.95)');
+    gradient.addColorStop(1, 'rgba(241, 184, 234, 0.91)');
+    ctx.fillStyle = gradient;
+    paintSpacedText(measured.chars, measured.width, letterSpacing, 'fill');
+
+    // 极轻的高光扫过文字，提升精致感但不抢爱心主体。
+    const shimmer = (time * 0.000085) % 1;
+    const shimmerX = -measured.width / 2 + measured.width * shimmer;
+    const glint = ctx.createRadialGradient(shimmerX, -fontSize * 0.08, 0, shimmerX, -fontSize * 0.08, fontSize * 1.15);
+    glint.addColorStop(0, 'rgba(255,255,255,0.13)');
+    glint.addColorStop(1, 'rgba(255,255,255,0)');
+    ctx.globalCompositeOperation = 'lighter';
+    ctx.globalAlpha = alpha * 0.11;
+    ctx.fillStyle = glint;
+    ctx.fillRect(-measured.width / 2 - fontSize, -fontSize, measured.width + fontSize * 2, fontSize * 2);
+
+    ctx.restore();
+    ctx.globalAlpha = 1;
+    ctx.globalCompositeOperation = 'source-over';
+    ctx.shadowBlur = 0;
+  }
+
+  function animate(time) {
+    RAF(animate);
+
+    // iPhone / iOS 微信以约 50fps 绘制，降低持续高负载；
+    // 动画阶段仍按真实时间推进，视觉节奏不会变慢。
+    if (mobile && IS_IOS) {
+      const minFrameTime = 1000 / 50;
+      if (lastRenderedAt && time - lastRenderedAt < minFrameTime) return;
+      lastRenderedAt = time;
+    }
+
+    const deltaMs = clamp(time - lastTime, 0, 40);
+    const step = deltaMs / 16.6667;
+    lastTime = time;
+
+    ctx.globalAlpha = 1;
+    ctx.globalCompositeOperation = 'source-over';
+    ctx.fillStyle = '#000';
+    ctx.fillRect(0, 0, W, H);
+
+    // 1. 纯黑停顿：网页打开或生成预览时，首先只看到黑色。
+    if (state === 'DARK' && time - stateStartedAt >= CONFIG.darkHold) {
+      state = 'ASH';
+      stateStartedAt = time;
+    }
+
+    // 2. 灰色粒子堆从黑暗里慢慢显现，然后才开始聚拢。
+    if (
+      state === 'ASH' &&
+      time - stateStartedAt >= CONFIG.ashFadeDuration + CONFIG.ashHoldDuration
+    ) {
+      startGather(time, false);
+    }
+
+    // 3. 灰色爱心拼完整后，从内部向外变成粉色。
+    if (state === 'COLORIZE' && time - stateStartedAt >= CONFIG.colorizeDuration) {
+      state = 'HOLD';
+      stateStartedAt = time;
+      blessingStartedAt = time;
+    }
+
+    if (state === 'GATHER' || state === 'COLORIZE' || state === 'HOLD') {
+      const rotationElapsed = Math.max(0, time - rotationStartedAt);
+      rotationY = -0.08 + Math.sin(rotationElapsed * CONFIG.rotationSpeed) * CONFIG.rotationAmplitude;
+    }
+
+    const beat = state === 'COLORIZE' || state === 'HOLD' ? heartbeat(time) : 1;
+
+    if (state === 'GATHER') {
+      for (let i = 0; i < heartParticles.length; i++) {
+        heartParticles[i].gather(time, step, beat);
+      }
+      checkGatherComplete(time);
+    } else if (state === 'COLORIZE' || state =
