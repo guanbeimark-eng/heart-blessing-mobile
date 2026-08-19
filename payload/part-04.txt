@@ -1,0 +1,179 @@
+-= step;
+      this.vy += this.gravity * step;
+      this.x += this.vx * step;
+      this.y += this.vy * step;
+    }
+  }
+
+  function createScene() {
+    const viewport = getViewportSize();
+    W = viewport.width;
+    H = viewport.height;
+    mobile = Math.min(W, H) < 700;
+
+    // iPhone 上限制 DPR，避免超高分辨率 Canvas 占用过多内存导致页面刷新或白屏。
+    const dprCap = mobile ? (IS_IOS ? 1.45 : 1.65) : 2;
+    DPR = Math.min(window.devicePixelRatio || 1, dprCap);
+
+    document.documentElement.style.setProperty('--app-height', `${H}px`);
+    canvas.width = Math.max(1, Math.round(W * DPR));
+    canvas.height = Math.max(1, Math.round(H * DPR));
+    canvas.style.width = `${W}px`;
+    canvas.style.height = `${H}px`;
+    ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+    ctx.imageSmoothingEnabled = true;
+
+    const portrait = H > W * 1.12;
+    centerX = W * 0.5;
+    centerY = H * (portrait ? 0.345 : 0.365);
+    floorY = H * (portrait ? 0.785 : 0.772);
+
+    // 让桌面端尺寸接近参考图：爱心宽度约占画面 25%。
+    shapeScale = clamp(Math.min(W, H) * 0.01225, portrait ? 6.2 : 7.4, 11.8);
+    shapeDepth = shapeScale * (portrait ? 6.25 : 7.15);
+    cameraDistance = mobile ? 510 : 900;
+
+    floorRX = Math.min(W * (portrait ? 0.38 : 0.255), H * 0.415);
+    floorRY = Math.min(H * (portrait ? 0.047 : 0.062), 59);
+
+    const performanceScale = getMobilePerformanceScale();
+    const baseHeartCount = mobile ? CONFIG.heartCountMobile : CONFIG.heartCountDesktop;
+    const baseFloorCount = mobile ? CONFIG.floorCountMobile : CONFIG.floorCountDesktop;
+    const heartCount = Math.max(1050, Math.round(baseHeartCount * performanceScale));
+    const floorCount = Math.max(360, Math.round(baseFloorCount * performanceScale));
+    const targets = makeHeartTargets(heartCount);
+
+    heartParticles = targets.map(target => new HeartParticle(target));
+    floorParticles = Array.from({ length: floorCount }, () => new FloorParticle());
+    drips = [];
+    splashes = [];
+
+    rotationY = -0.08;
+    rotationStartedAt = 0;
+    dripBudget = 0;
+    erosionBudget = 0;
+    detachedCount = 0;
+    gatherStartsPink = 0;
+    blessingStartedAt = 0;
+    state = 'DARK';
+    stateStartedAt = performance.now();
+    lastTime = stateStartedAt;
+    lastRenderedAt = 0;
+    clearTimeout(regroupTimer);
+  }
+
+  function startGather(time, fromExplosion = false) {
+    state = 'GATHER';
+    stateStartedAt = time;
+    gatherStartsPink = fromExplosion ? 1 : 0;
+    blessingStartedAt = 0;
+    rotationStartedAt = time;
+    dripBudget = 0;
+    erosionBudget = 0;
+    detachedCount = 0;
+    heartParticles.forEach(p => p.resetForGather(time));
+  }
+
+  function checkGatherComplete(time) {
+    let arrived = 0;
+    for (let i = 0; i < heartParticles.length; i++) {
+      if (heartParticles[i].arrived) arrived++;
+    }
+
+    if (arrived / heartParticles.length > 0.935 || time - stateStartedAt > 5000) {
+      // 先停留为完整的灰色爱心，再由内部向外逐渐点亮为粉色。
+      state = 'COLORIZE';
+      stateStartedAt = time;
+      heartParticles.forEach(p => { p.arrived = true; });
+    }
+  }
+
+  function explodeHeart() {
+    if (state !== 'HOLD') return;
+    state = 'EXPLODE';
+    stateStartedAt = performance.now();
+    heartParticles.forEach(p => {
+      if (!p.detached) p.explode();
+    });
+
+    clearTimeout(regroupTimer);
+    regroupTimer = setTimeout(() => {
+      // 将仍在半空中的真实脱落粒子先落回粒子池，再参与下一次聚拢。
+      for (let i = 0; i < drips.length; i++) {
+        const d = drips[i];
+        if (d.owner) {
+          d.owner.x = d.x;
+          d.owner.y = Math.min(d.impactY, d.y);
+          d.owner.detached = false;
+        }
+      }
+      drips = [];
+      splashes = [];
+
+      const targets = makeHeartTargets(heartParticles.length);
+      for (let i = 0; i < heartParticles.length; i++) {
+        heartParticles[i].target = targets[i];
+        heartParticles[i].localStart = 0;
+        heartParticles[i].detached = false;
+        heartParticles[i].settled = false;
+      }
+      startGather(performance.now(), true);
+    }, CONFIG.regroupDelay);
+  }
+
+  function findVisibleDripSource(minTargetY, preferEdge = false) {
+    let fallback = null;
+
+    for (let tries = 0; tries < 56; tries++) {
+      const p = heartParticles[(Math.random() * heartParticles.length) | 0];
+      if (
+        !p.detached &&
+        p.arrived &&
+        p.target.y > minTargetY &&
+        p.y < floorY - 20
+      ) {
+        if (!preferEdge || p.target.edge) return p;
+        fallback = p;
+      }
+    }
+
+    return fallback;
+  }
+
+  function spawnDrips(deltaMs, time) {
+    // 爱心完全由灰色点亮成粉色以后，才开始持续滴落。
+    if (state !== 'HOLD') return;
+
+    const performanceScale = getMobilePerformanceScale();
+    const baseRate = mobile ? CONFIG.dripRateMobile : CONFIG.dripRateDesktop;
+    const baseMax = mobile ? CONFIG.maxDripsMobile : CONFIG.maxDripsDesktop;
+    const rate = baseRate * performanceScale;
+    const max = Math.max(180, Math.round(baseMax * performanceScale));
+    dripBudget += rate * deltaMs / 1000;
+
+    let guard = 0;
+    while (dripBudget >= 1 && drips.length < max && guard < 24) {
+      dripBudget -= 1;
+      guard++;
+
+      // 高频雨滴大多是视觉副本，因此雨幕可以保持连续，但不会让爱心几秒钟内被掏空。
+      const source = findVisibleDripSource(shapeScale * 1.7, false);
+      if (source) drips.push(new Drip(source, false));
+    }
+
+    // 完整爱心先展示一会儿，再以极低速真正脱落。
+    if (time - stateStartedAt < CONFIG.erosionDelay) return;
+
+    const baseErosionRate = mobile ? CONFIG.erosionRateMobile : CONFIG.erosionRateDesktop;
+    const maxMissingRatio = mobile ? CONFIG.maxMissingRatioMobile : CONFIG.maxMissingRatioDesktop;
+    const maxDetached = Math.floor(heartParticles.length * maxMissingRatio);
+    if (detachedCount >= maxDetached || drips.length >= max) return;
+
+    // 真实缺口速度并非恒定：心尖附近稍快，越接近爱心上部越慢。
+    // progress=0 时约为基础速率的 1.35 倍；progress=1 时仅约为 0.20 倍。
+    const currentErosionProgress = clamp(detachedCount / Math.max(1, maxDetached), 0, 1);
+    const slowdownProgress = Math.pow(currentErosionProgress, CONFIG.erosionSlowdownPower);
+    const dynamicMultiplier = lerp(
+      CONFIG.erosionStartMultiplier,
+      CONFIG.erosionEndMultiplier,
+      slowdo
