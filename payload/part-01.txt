@@ -1,0 +1,217 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, minimum-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover" />
+  <meta name="theme-color" content="#000000" />
+  <meta name="color-scheme" content="dark" />
+  <meta name="format-detection" content="telephone=no,email=no,address=no" />
+  <meta name="mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="apple-touch-fullscreen" content="yes" />
+  <meta name="apple-mobile-web-app-title" content="粒子爱心" />
+  <title>粒子爱心 · iPhone兼容版</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      --app-height: 100vh;
+      --safe-top: env(safe-area-inset-top, 0px);
+      --safe-right: env(safe-area-inset-right, 0px);
+      --safe-bottom: env(safe-area-inset-bottom, 0px);
+      --safe-left: env(safe-area-inset-left, 0px);
+    }
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+      -webkit-tap-highlight-color: transparent;
+    }
+    html {
+      width: 100%;
+      height: 100%;
+      background: #000;
+      -webkit-text-size-adjust: 100%;
+      text-size-adjust: 100%;
+    }
+    body {
+      position: fixed;
+      inset: 0;
+      width: 100%;
+      height: var(--app-height);
+      min-height: -webkit-fill-available;
+      overflow: hidden;
+      background: #000;
+      overscroll-behavior: none;
+      touch-action: none;
+      -webkit-user-select: none;
+      user-select: none;
+      -webkit-touch-callout: none;
+    }
+    canvas {
+      position: fixed;
+      inset: 0;
+      display: block;
+      width: 100vw;
+      height: var(--app-height);
+      background: #000;
+      cursor: pointer;
+      touch-action: none;
+      -webkit-user-select: none;
+      user-select: none;
+      -webkit-touch-callout: none;
+      transform: translateZ(0);
+      -webkit-transform: translateZ(0);
+    }
+  </style>
+</head>
+<body>
+<canvas id="scene" aria-label="灰色粒子从黑暗中聚拢成粉色旋转爱心，并依次呈现四句祝福语，最后停留在“未来皆可期”"></canvas>
+
+<script>
+(() => {
+  'use strict';
+
+  const canvas = document.getElementById('scene');
+
+  // iOS Safari / 微信 WKWebView 对部分实验性 Canvas 参数支持不一致。
+  // 使用稳定的 2D Context，并保留标准回退，减少白屏风险。
+  let ctx = null;
+  try {
+    ctx = canvas.getContext('2d', { alpha: false });
+  } catch (error) {
+    ctx = null;
+  }
+  if (!ctx) ctx = canvas.getContext('2d');
+  if (!ctx) return;
+
+  // 本版本仅使用 Canvas 动画，不调用摄像头，也不包含手势识别。
+  const UA = navigator.userAgent || '';
+  const IS_IOS = /iPad|iPhone|iPod/i.test(UA) ||
+    (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+  const IS_WECHAT = /MicroMessenger/i.test(UA);
+  const CPU_CORES = navigator.hardwareConcurrency || 6;
+  const TAU = Math.PI * 2;
+  const RAF = window.requestAnimationFrame || function (callback) {
+    return window.setTimeout(function () { callback(Date.now()); }, 16);
+  };
+
+  const CONFIG = {
+    // 开场节奏：先保持纯黑，再出现灰色粒子堆，最后聚拢并点亮为粉色。
+    darkHold: 1000,
+    ashFadeDuration: 720,
+    ashHoldDuration: 480,
+    colorizeDuration: 1350,
+    gatherFadeGrayDuration: 520,
+
+    // 参考图主体：颗粒偏大、轮廓明亮、内部保留少量暗部。
+    heartCountDesktop: 4600,
+    heartCountMobile: 2050,
+    floorCountDesktop: 1350,
+    floorCountMobile: 620,
+
+    heartParticleDesktop: [1.35, 3.15],
+    heartParticleMobile: [1.12, 2.65],
+    floorParticleDesktop: [0.95, 2.70],
+    floorParticleMobile: [0.82, 2.25],
+
+    // 使用小角度往复 3D 旋转，始终能看清心形，不会转成一条竖线。
+    rotationSpeed: 0.00034,
+    rotationAmplitude: 0.42,
+
+    // 雨滴只在爱心完全点亮后出现。
+    // 大量“视觉雨滴”只是复制粒子，保证雨幕连续；只有极少量雨滴会真正从爱心主体脱落。
+    dripRateDesktop: 102,
+    dripRateMobile: 58,
+    maxDripsDesktop: 570,
+    maxDripsMobile: 300,
+
+    // 真实脱落速度：缺口从心尖开始时稍快，越向上扩展越慢。
+    // 高频雨幕仍主要由视觉副本构成，不会快速掏空爱心主体。
+    erosionDelay: 4200,
+    erosionRateDesktop: 0.85,
+    erosionRateMobile: 0.38,
+
+    // 真实脱落速率的动态倍率：开始约 1.35 倍，最后降至约 0.20 倍。
+    // slowdownPower 越大，后半段减速越明显。
+    erosionStartMultiplier: 1.35,
+    erosionEndMultiplier: 0.20,
+    erosionSlowdownPower: 1.28,
+
+    // 缺口前沿向上推进也采用“先稍快、后渐慢”的曲线。
+    erosionFrontierEase: 1.65,
+
+    maxMissingRatioDesktop: 0.12,
+    maxMissingRatioMobile: 0.12,
+
+    gatherAccel: [0.065, 0.135],
+    gatherMaxSpeed: [7.5, 15.5],
+    gatherFriction: 0.958,
+    arriveDistance: 3.2,
+
+    explodeForce: [7.5, 21],
+    explodeGravity: 0.105,
+    regroupDelay: 2550,
+
+    // 祝福语按四段依次切换。前三句淡入停留后轻微上移淡出，最后一句保留在结尾。
+    blessingDelay: 520,
+    blessingLineDuration: 3000,
+    blessingFadeIn: 680,
+    blessingFadeOut: 620,
+    blessingRise: 18,
+
+    // 祝福语排版参数：楷体稍微放大，仍固定在粒子池下方的留白区。
+    blessingFontMobile: [15.5, 17.5],
+    blessingFontDesktop: [18, 23.5],
+    blessingYBand: [0.895, 0.915]
+  };
+
+  const COLORS = [
+    { rgb: [255, 240, 252], core: 'rgb(255,240,252)', glow: 'rgba(255,205,246,0.38)' },
+    { rgb: [255, 184, 235], core: 'rgb(255,184,235)', glow: 'rgba(255,117,220,0.34)' },
+    { rgb: [247, 137, 226], core: 'rgb(247,137,226)', glow: 'rgba(239,84,217,0.32)' },
+    { rgb: [211, 151, 255], core: 'rgb(211,151,255)', glow: 'rgba(179,96,255,0.32)' },
+    { rgb: [176, 129, 247], core: 'rgb(176,129,247)', glow: 'rgba(126,80,234,0.30)' }
+  ];
+
+  // 五档灰色与五档粉紫色一一对应，聚拢完成后可平滑过渡，不会突然跳色。
+  const GRAY_LEVELS = [218, 178, 145, 116, 92];
+
+  // 必须完整保留的四句祝福语，作为动画叙事的一部分依次出现。
+  const BLESSINGS = [
+    '愿你一路繁花',
+    '所念皆所愿',
+    '所遇皆所求',
+    '未来皆可期'
+  ];
+
+  let W = 0;
+  let H = 0;
+  let DPR = 1;
+  let mobile = false;
+
+  let centerX = 0;
+  let centerY = 0;
+  let floorY = 0;
+  let floorRX = 0;
+  let floorRY = 0;
+  let shapeScale = 0;
+  let shapeDepth = 0;
+  let cameraDistance = 0;
+
+  let heartParticles = [];
+  let floorParticles = [];
+  let drips = [];
+  let splashes = [];
+
+  let state = 'DARK';
+  let stateStartedAt = performance.now();
+  let lastTime = performance.now();
+  let rotationY = -0.08;
+  let rotationStartedAt = 0;
+  let dripBudget = 0;
+  let erosionBudget = 0;
+  let detachedCount = 0;
+  let regroupTimer = 0;
+  let gatherStartsPink = 0;
+  let ble
