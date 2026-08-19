@@ -1,87 +1,80 @@
 <!doctype html>
 <html lang="zh-CN">
 <head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover,user-scalable=no">
-<meta name="theme-color" content="#030307">
-<title>3D Gesture Heart</title>
-<style>
-*{box-sizing:border-box}
-html,body{margin:0;width:100%;height:100%;overflow:hidden;background:#030307;touch-action:none}
-body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Arial,sans-serif}
-#gl{position:fixed;inset:0;width:100%;height:100%;display:block}
-#video{position:fixed;right:10px;top:max(10px,env(safe-area-inset-top));width:92px;height:122px;object-fit:cover;transform:scaleX(-1);border-radius:12px;opacity:0;pointer-events:none;transition:opacity .3s;border:1px solid rgba(255,255,255,.10);background:#111}
-#video.on{opacity:.72}
-#enter{position:fixed;inset:0;z-index:20;display:flex;align-items:center;justify-content:center;padding:24px;background:radial-gradient(circle at 50% 42%,rgba(255,62,154,.12),rgba(3,3,7,.92) 58%,#030307 100%)}
-#enter.hide{display:none}
-.enterBtn{border:1px solid rgba(255,255,255,.15);border-radius:999px;padding:13px 22px;color:#fff;font-weight:700;font-size:15px;letter-spacing:.04em;background:rgba(255,255,255,.07);-webkit-backdrop-filter:blur(12px);backdrop-filter:blur(12px)}
-#mini{position:fixed;left:50%;bottom:max(14px,env(safe-area-inset-bottom));transform:translateX(-50%);padding:8px 13px;border-radius:999px;color:rgba(255,255,255,.80);font-size:11px;border:1px solid rgba(255,255,255,.08);background:rgba(0,0,0,.28);-webkit-backdrop-filter:blur(10px);backdrop-filter:blur(10px);white-space:nowrap;opacity:.92;transition:opacity .4s}
-</style>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, minimum-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover" />
+  <meta name="theme-color" content="#000000" />
+  <meta name="color-scheme" content="dark" />
+  <meta name="format-detection" content="telephone=no,email=no,address=no" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <title>粒子爱心</title>
+  <style>
+    html,body{margin:0;width:100%;height:100%;overflow:hidden;background:#000;color:#d9b8d2;-webkit-text-size-adjust:100%;}
+    body{position:fixed;inset:0;display:flex;align-items:center;justify-content:center;font:13px "Kaiti SC","STKaiti","KaiTi",serif;letter-spacing:2px;}
+    #status{opacity:0;transition:opacity .5s ease;text-align:center;padding:24px;}
+    #status.show{opacity:.72;}
+  </style>
 </head>
 <body>
-<canvas id="gl"></canvas>
-<video id="video" playsinline webkit-playsinline muted autoplay></video>
-<div id="enter"><button class="enterBtn" id="enterBtn">点击进入</button></div>
-<div id="mini">点击屏幕切换：爱心 · 土星 · 爆炸</div>
-<script>
-(function(){
-'use strict';
-const canvas=document.getElementById('gl'),video=document.getElementById('video'),enter=document.getElementById('enter'),enterBtn=document.getElementById('enterBtn'),mini=document.getElementById('mini');
-const UA=navigator.userAgent||'';
-const IS_MOBILE=/Android|iPhone|iPad|iPod|Mobile/i.test(UA)||matchMedia('(pointer:coarse)').matches;
-const CORE_COUNT=IS_MOBILE?9500:19000,DRIP_COUNT=IS_MOBILE?1300:2600,DPR=Math.min(devicePixelRatio||1,IS_MOBILE?1.35:2);
-let targetMode=0,modeMix=[1,0,0],pointerX=0,pointerY=0,startTime=performance.now();
-const gl=canvas.getContext('webgl',{alpha:false,antialias:false,depth:false,stencil:false,powerPreference:'high-performance'})||canvas.getContext('experimental-webgl');
-if(!gl){document.body.innerHTML='<div style="height:100%;display:flex;align-items:center;justify-content:center;background:#030307;color:white;font:14px system-ui;padding:28px;text-align:center">当前微信内核未启用 WebGL。<br>请升级微信后重新打开。</div>';return;}
-function resize(){canvas.width=Math.floor(innerWidth*DPR);canvas.height=Math.floor(innerHeight*DPR);canvas.style.width=innerWidth+'px';canvas.style.height=innerHeight+'px';gl.viewport(0,0,canvas.width,canvas.height)}
-addEventListener('resize',resize,{passive:true});addEventListener('orientationchange',()=>setTimeout(resize,180),{passive:true});resize();
-function compile(type,src){const s=gl.createShader(type);gl.shaderSource(s,src);gl.compileShader(s);if(!gl.getShaderParameter(s,gl.COMPILE_STATUS))throw new Error(gl.getShaderInfoLog(s));return s}
-function createProgram(vs,fs){const p=gl.createProgram();gl.attachShader(p,compile(gl.VERTEX_SHADER,vs));gl.attachShader(p,compile(gl.FRAGMENT_SHADER,fs));gl.linkProgram(p);if(!gl.getProgramParameter(p,gl.LINK_STATUS))throw new Error(gl.getProgramInfoLog(p));return p}
-function perspective(fovy,aspect,near,far){const f=1/Math.tan(fovy/2),nf=1/(near-far);return new Float32Array([f/aspect,0,0,0,0,f,0,0,0,0,(far+near)*nf,-1,0,0,2*far*near*nf,0])}
-function mul4(a,b){const out=new Float32Array(16);for(let r=0;r<4;r++){for(let c=0;c<4;c++){out[c+r*4]=a[r*4]*b[c]+a[r*4+1]*b[c+4]+a[r*4+2]*b[c+8]+a[r*4+3]*b[c+12]}}return out}
-function rotX(a){const c=Math.cos(a),s=Math.sin(a);return new Float32Array([1,0,0,0,0,c,s,0,0,-s,c,0,0,0,0,1])}
-function rotY(a){const c=Math.cos(a),s=Math.sin(a);return new Float32Array([c,0,-s,0,0,1,0,0,s,0,c,0,0,0,0,1])}
-function trans(x,y,z){return new Float32Array([1,0,0,0,0,1,0,0,0,0,1,0,x,y,z,1])}
-function viewMatrix(rx,ry,x,y,z){return mul4(mul4(rotX(rx),rotY(ry)),trans(x,y,z))}
-function damp(a,b,l,dt){return a+(b-a)*(1-Math.exp(-l*dt))}function rand(min,max){return min+Math.random()*(max-min)}
-function heartPoint(){const t=Math.random()*Math.PI*2,outlineX=16*Math.pow(Math.sin(t),3),outlineY=13*Math.cos(t)-5*Math.cos(2*t)-2*Math.cos(3*t)-Math.cos(4*t),edgeWeight=Math.random()<.46?.88+Math.random()*.22:Math.sqrt(Math.random());let x=outlineX*edgeWeight*.175,y=outlineY*edgeWeight*.175+.26,z=(Math.random()*2-1)*(.28+.95*Math.pow(1-edgeWeight*.55,1.1));x*=1+Math.abs(z)*.09;y*=1-Math.abs(z)*.03;const twist=z*.24,c=Math.cos(twist),s=Math.sin(twist);return[x*c-y*s,x*s+y*c,z]}
-function saturnPoint(){if(Math.random()<.64){const u=Math.random(),v=Math.random(),th=2*Math.PI*u,ph=Math.acos(2*v-1),r=2*Math.cbrt(Math.random());return[r*Math.sin(ph)*Math.cos(th),r*Math.cos(ph)*.86,r*Math.sin(ph)*Math.sin(th)]}const a=Math.random()*Math.PI*2,rr=2.55+Math.random()*1.55;let x=Math.cos(a)*rr,y=rand(-.07,.07),z=Math.sin(a)*rr;const tilt=.42,c=Math.cos(tilt),s=Math.sin(tilt);return[x,y*c-z*s,y*s+z*c]}
-function boomPoint(){const r=3.1+Math.pow(Math.random(),.35)*5.2,th=Math.random()*Math.PI*2,z=Math.random()*2-1,s=Math.sqrt(1-z*z);return[Math.cos(th)*s*r,z*r,Math.sin(th)*s*r]}
-function build(fn,count){const out=new Float32Array(count*3);for(let i=0;i<count;i++){const p=fn();out[i*3]=p[0];out[i*3+1]=p[1];out[i*3+2]=p[2]}return out}
-const heart=build(heartPoint,CORE_COUNT),saturn=build(saturnPoint,CORE_COUNT),boom=build(boomPoint,CORE_COUNT),seed=new Float32Array(CORE_COUNT);for(let i=0;i<CORE_COUNT;i++)seed[i]=Math.random();
-function dripOrigin(){let p;for(let k=0;k<10;k++){p=heartPoint();if(p[1]<.55)break}p[1]-=rand(.2,.95);p[0]*=rand(.72,.96);p[2]*=rand(.75,1.08);return p}
-const dripOriginArr=build(dripOrigin,DRIP_COUNT),dripSeed=new Float32Array(DRIP_COUNT);for(let i=0;i<DRIP_COUNT;i++)dripSeed[i]=Math.random();
-const coreVS=`precision highp float;attribute vec3 aHeart;attribute vec3 aSaturn;attribute vec3 aBoom;attribute float aSeed;uniform mat4 uProj;uniform mat4 uView;uniform float uTime;uniform vec3 uMix;uniform float uDpr;varying float vSeed;varying float vMode;varying float vDepth;void main(){vec3 p=aHeart*uMix.x+aSaturn*uMix.y+aBoom*uMix.z;float id=aSeed*997.0;float t=uTime;float breathe=1.0+sin(t*2.05+id)*0.042*uMix.x;p.xy*=breathe;p.z*=1.0+sin(t*1.3+id*0.6)*0.06*uMix.x;vec3 drift=vec3(sin(t*.72+id*1.73),cos(t*.63+id*1.21),sin(t*.58+id*1.47));p+=drift*(0.045+0.10*aSeed);float innerRain=mod(aSeed*8.0-t*(0.40+aSeed*.82),8.0);p.y-=innerRain*0.05*uMix.x;vec4 mv=uView*vec4(p,1.0);gl_Position=uProj*mv;float persp=clamp(7.2/max(1.0,-mv.z),.55,2.2);gl_PointSize=(1.25+aSeed*2.8)*uDpr*persp;vSeed=aSeed;vMode=uMix.y+2.0*uMix.z;vDepth=persp;}`;
-const coreFS=`precision highp float;varying float vSeed;varying float vMode;varying float vDepth;void main(){vec2 uv=gl_PointCoord-.5;float d=length(uv);if(d>.5)discard;float core=smoothstep(.5,.02,d),halo=smoothstep(.5,.20,d);vec3 heartA=vec3(1.0,.08,.48),heartB=vec3(1.0,.52,.80),heartC=vec3(.76,.34,1.0),satA=vec3(.30,.62,1.0),satB=vec3(.94,.69,1.0),boomA=vec3(1.0,.20,.58),boomB=vec3(.55,.28,1.0);vec3 cH=mix(mix(heartA,heartB,smoothstep(0.0,.68,vSeed)),heartC,smoothstep(.68,1.0,vSeed)),cS=mix(satA,satB,vSeed),cB=mix(boomA,boomB,vSeed);float sm=clamp(vMode,0.0,1.0),bm=clamp(vMode-1.0,0.0,1.0);vec3 col=mix(cH,cS,sm);col=mix(col,cB,bm);col*=.76+core*1.40+halo*.18;float alpha=(.20+core*.80)*(.76+.24*vDepth);gl_FragColor=vec4(col,alpha);}`;
-const dripVS=`precision highp float;attribute vec3 aOrigin;attribute float aSeed;uniform mat4 uProj;uniform mat4 uView;uniform float uTime;uniform float uHeart;uniform float uDpr;varying float vAlpha;varying float vSeed;void main(){float cycle=fract(aSeed*17.0-uTime*(0.18+0.35*aSeed));float fall=cycle*(3.8+2.6*aSeed);vec3 p=aOrigin;p.x+=sin(uTime*1.2+aSeed*19.0)*0.05;p.z+=cos(uTime*1.0+aSeed*23.0)*0.08;p.y-=fall;vec4 mv=uView*vec4(p,1.0);gl_Position=uProj*mv;float persp=clamp(6.6/max(1.0,-mv.z),.5,2.0);gl_PointSize=(1.3+aSeed*2.0)*uDpr*persp;float fade=smoothstep(0.0,.15,cycle)*(1.0-smoothstep(.78,1.0,cycle));vAlpha=fade*uHeart;vSeed=aSeed;}`;
-const dripFS=`precision highp float;varying float vAlpha;varying float vSeed;void main(){vec2 uv=gl_PointCoord-.5;float d=length(uv);if(d>.5)discard;float core=smoothstep(.5,.06,d);vec3 c=mix(vec3(1.0,.35,.70),vec3(1.0,.70,.92),vSeed);gl_FragColor=vec4(c*(.55+core*1.1),vAlpha*(.18+core*.82));}`;
-const coreProgram=createProgram(coreVS,coreFS),dripProgram=createProgram(dripVS,dripFS);
-function buffer(data){const b=gl.createBuffer();gl.bindBuffer(gl.ARRAY_BUFFER,b);gl.bufferData(gl.ARRAY_BUFFER,data,gl.STATIC_DRAW);return b}function attrib(program,name,data,size){return{loc:gl.getAttribLocation(program,name),buf:buffer(data),size}}
-const coreAttribs={aHeart:attrib(coreProgram,'aHeart',heart,3),aSaturn:attrib(coreProgram,'aSaturn',saturn,3),aBoom:attrib(coreProgram,'aBoom',boom,3),aSeed:attrib(coreProgram,'aSeed',seed,1)},dripAttribs={aOrigin:attrib(dripProgram,'aOrigin',dripOriginArr,3),aSeed:attrib(dripProgram,'aSeed',dripSeed,1)};
-function bindAttribs(map){Object.values(map).forEach(a=>{gl.bindBuffer(gl.ARRAY_BUFFER,a.buf);gl.enableVertexAttribArray(a.loc);gl.vertexAttribPointer(a.loc,a.size,gl.FLOAT,false,0,0)})}
-const coreUniforms={uProj:gl.getUniformLocation(coreProgram,'uProj'),uView:gl.getUniformLocation(coreProgram,'uView'),uTime:gl.getUniformLocation(coreProgram,'uTime'),uMix:gl.getUniformLocation(coreProgram,'uMix'),uDpr:gl.getUniformLocation(coreProgram,'uDpr')},dripUniforms={uProj:gl.getUniformLocation(dripProgram,'uProj'),uView:gl.getUniformLocation(dripProgram,'uView'),uTime:gl.getUniformLocation(dripProgram,'uTime'),uHeart:gl.getUniformLocation(dripProgram,'uHeart'),uDpr:gl.getUniformLocation(dripProgram,'uDpr')};
-gl.enable(gl.BLEND);gl.blendFunc(gl.SRC_ALPHA,gl.ONE);gl.disable(gl.DEPTH_TEST);gl.clearColor(.012,.012,.027,1);
-function nextMode(){targetMode=(targetMode+1)%3;mini.textContent=['爱心模式','土星模式','粒子爆炸'][targetMode];mini.style.opacity='.92';clearTimeout(nextMode._t);nextMode._t=setTimeout(()=>mini.style.opacity='.38',1200)}
-canvas.addEventListener('click',nextMode,{passive:true});canvas.addEventListener('touchend',e=>{e.preventDefault();nextMode()},{passive:false});addEventListener('pointermove',e=>{pointerX=(e.clientX/innerWidth-.5)*2;pointerY=(e.clientY/innerHeight-.5)*2},{passive:true});
-let last=performance.now();function render(now){requestAnimationFrame(render);const dt=Math.min((now-last)/1000,.033);last=now;const t=(now-startTime)/1000;for(let i=0;i<3;i++)modeMix[i]=damp(modeMix[i],i===targetMode?1:0,4.6,dt);const proj=perspective(52*Math.PI/180,canvas.width/canvas.height,.1,100),view=viewMatrix(-pointerY*.16+Math.sin(t*.36)*.06,t*(targetMode===0?.28:targetMode===1?.36:.21)+pointerX*.18,0,-.12,-13.3);gl.clear(gl.COLOR_BUFFER_BIT);gl.useProgram(coreProgram);bindAttribs(coreAttribs);gl.uniformMatrix4fv(coreUniforms.uProj,false,proj);gl.uniformMatrix4fv(coreUniforms.uView,false,view);gl.uniform1f(coreUniforms.uTime,t);gl.uniform3f(coreUniforms.uMix,modeMix[0],modeMix[1],modeMix[2]);gl.uniform1f(coreUniforms.uDpr,DPR);gl.drawArrays(gl.POINTS,0,CORE_COUNT);gl.useProgram(dripProgram);bindAttribs(dripAttribs);gl.uniformMatrix4fv(dripUniforms.uProj,false,proj);gl.uniformMatrix4fv(dripUniforms.uView,false,view);gl.uniform1f(dripUniforms.uTime,t);gl.uniform1f(dripUniforms.uHeart,modeMix[0]);gl.uniform1f(dripUniforms.uDpr,DPR*.95);gl.drawArrays(gl.POINTS,0,DRIP_COUNT)}requestAnimationFrame(render);
+  <div id="status" aria-live="polite"></div>
+  <script>
+  (function(){
+    'use strict';
+    var version='20260819-iphone-2';
+    var files=[
+      'payload/part-01.txt','payload/part-02.txt','payload/part-03.txt','payload/part-04.txt',
+      'payload/part-05.txt','payload/part-06.txt','payload/part-07.txt','payload/part-08.txt'
+    ];
+    var chunks=new Array(files.length);
+    var completed=0;
+    var stopped=false;
+    var status=document.getElementById('status');
 
-let mpHands=null,handBusy=false,stream=null,lastHandAt=0,gestureStable='',gestureFrames=0,cameraStarting=false,handLoopStarted=false,cameraRetryCount=0;
-const IS_IOS=/iPhone|iPad|iPod/i.test(UA),IS_ANDROID=/Android/i.test(UA),IS_WECHAT=/MicroMessenger/i.test(UA),LOW_POWER=IS_MOBILE&&((navigator.hardwareConcurrency||4)<=4),HAND_INTERVAL=LOW_POWER?105:(IS_IOS?85:70);
-video.setAttribute('playsinline','');video.setAttribute('webkit-playsinline','');video.playsInline=true;video.muted=true;video.autoplay=true;
-function setMiniStatus(text,ms=2200){mini.textContent=text;mini.style.opacity='.92';clearTimeout(setMiniStatus._t);if(ms)setMiniStatus._t=setTimeout(()=>mini.style.opacity='.38',ms)}
-function loadScript(src,timeout=9000){return new Promise((resolve,reject)=>{const s=document.createElement('script'),timer=setTimeout(()=>{s.remove();reject(new Error('script timeout'))},timeout);s.onload=()=>{clearTimeout(timer);resolve()};s.onerror=()=>{clearTimeout(timer);s.remove();reject(new Error('script load failed'))};s.crossOrigin='anonymous';s.src=src;s.async=true;document.head.appendChild(s)})}
-async function loadHandsLibrary(){if(window.Hands)return true;const urls=['https://cdn.jsdelivr.net/npm/@mediapipe/hands@0.4/hands.js','https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js','https://unpkg.com/@mediapipe/hands@0.4/hands.js','https://unpkg.com/@mediapipe/hands/hands.js'];for(const u of urls){try{await loadScript(u);if(window.Hands)return true}catch(e){console.warn('[hands] CDN failed',u,e)}}return false}
-function waitForVideoReady(timeout=7000){return new Promise((resolve,reject)=>{if(video.readyState>=2&&!video.paused&&video.videoWidth>0)return resolve();let done=false;const ok=()=>{if(done)return;done=true;cleanup();resolve()},fail=()=>{if(done)return;done=true;cleanup();reject(new Error('video not playing'))},cleanup=()=>{clearTimeout(timer);video.removeEventListener('loadedmetadata',tryPlay);video.removeEventListener('playing',ok);video.removeEventListener('canplay',tryPlay)},tryPlay=async()=>{try{await video.play()}catch(e){}if(video.videoWidth>0&&video.readyState>=2&&!video.paused)ok()},timer=setTimeout(fail,timeout);video.addEventListener('loadedmetadata',tryPlay);video.addEventListener('canplay',tryPlay);video.addEventListener('playing',ok);tryPlay()})}
-async function stopCamera(){if(stream){stream.getTracks().forEach(t=>{try{t.stop()}catch(e){}});stream=null}video.srcObject=null;video.classList.remove('on')}
-async function getCompatibleCamera(){if(!navigator.mediaDevices||!navigator.mediaDevices.getUserMedia)throw new Error('getUserMedia unsupported');const attempts=[{video:{facingMode:{ideal:'user'},width:{ideal:320,max:480},height:{ideal:240,max:360},frameRate:{ideal:15,max:20}},audio:false},{video:{facingMode:'user',width:{ideal:320},height:{ideal:240}},audio:false},{video:{width:{ideal:320},height:{ideal:240}},audio:false},{video:true,audio:false}];let lastError=null;for(const constraints of attempts){try{const s=await navigator.mediaDevices.getUserMedia(constraints),track=s.getVideoTracks()[0];if(!track){s.getTracks().forEach(t=>t.stop());continue}return s}catch(e){lastError=e;console.warn('[camera] attempt failed',constraints,e)}}throw lastError||new Error('camera unavailable')}
-const dist=(a,b)=>Math.hypot(a.x-b.x,a.y-b.y,(a.z||0)-(b.z||0));function ext(lm,tip,pip){return dist(lm[tip],lm[0])>dist(lm[pip],lm[0])*1.10}function classify(lm){const palm=Math.max(.04,dist(lm[0],lm[9])),pinch=dist(lm[4],lm[8])/palm,n=[ext(lm,8,6),ext(lm,12,10),ext(lm,16,14),ext(lm,20,18)].filter(Boolean).length;if(pinch<.58&&n<=2)return 0;if(n===0&&pinch>.32)return 1;if(n>=3)return 2;return-1}
-function applyGesture(g){if(g<0)return;const k=String(g);if(k===gestureStable)gestureFrames++;else{gestureStable=k;gestureFrames=1}const needed=LOW_POWER?3:4;if(gestureFrames>=needed){targetMode=g;gestureFrames=0;setMiniStatus(['爱心模式','土星模式','粒子爆炸'][targetMode],1200)}}
-function makeHandsInstance(){const cdnBase='https://cdn.jsdelivr.net/npm/@mediapipe/hands@0.4/';const h=new Hands({locateFile:file=>cdnBase+file});h.setOptions({maxNumHands:1,modelComplexity:0,minDetectionConfidence:LOW_POWER?.50:.56,minTrackingConfidence:LOW_POWER?.48:.53});h.onResults(r=>{const list=r.multiHandLandmarks||[];if(list.length)applyGesture(classify(list[0]))});return h}
-async function initGesture(force=false){if(cameraStarting)return;if(stream&&!force)return;cameraStarting=true;if(!isSecureContext){setMiniStatus('需要 HTTPS 才能启用手势');cameraStarting=false;return}if(!navigator.mediaDevices||!navigator.mediaDevices.getUserMedia){setMiniStatus('当前微信/浏览器不支持网页摄像头');cameraStarting=false;return}try{const ok=await loadHandsLibrary();if(!ok)throw new Error('MediaPipe resources unavailable');await stopCamera();stream=await getCompatibleCamera();video.srcObject=stream;await waitForVideoReady();video.classList.add('on');if(!mpHands)mpHands=makeHandsInstance();cameraRetryCount=0;setMiniStatus('手势控制已开启',1500);if(!handLoopStarted){handLoopStarted=true;requestAnimationFrame(handLoop)}}catch(e){console.error('[gesture init]',e);await stopCamera();const name=e&&e.name?e.name:'';if(name==='NotAllowedError'||name==='SecurityError')setMiniStatus('请在微信/系统设置中允许摄像头权限',3500);else if(name==='NotFoundError'||name==='DevicesNotFoundError')setMiniStatus('未检测到可用摄像头',3000);else if(name==='NotReadableError'||name==='TrackStartError')setMiniStatus('摄像头被其他应用占用，请重试',3000);else setMiniStatus('手势初始化失败，点击屏幕仍可操作',3000)}finally{cameraStarting=false}}
-async function handLoop(now){requestAnimationFrame(handLoop);if(!mpHands||!stream||!video.videoWidth||document.hidden)return;if(video.paused){try{await video.play()}catch(e){}}if(handBusy||now-lastHandAt<HAND_INTERVAL)return;handBusy=true;lastHandAt=now;try{await mpHands.send({image:video})}catch(e){console.warn('[hands send]',e);cameraRetryCount++;if(cameraRetryCount===3)setTimeout(()=>initGesture(true),250)}finally{handBusy=false}}
-function enterExperience(){enter.classList.add('hide');initGesture()}enterBtn.addEventListener('click',enterExperience,{once:true});
-document.addEventListener('visibilitychange',()=>{if(!document.hidden){setTimeout(async()=>{if(stream&&video.paused){try{await video.play()}catch(e){}}if(!stream&&enter.classList.contains('hide'))initGesture(true)},350)}});window.addEventListener('pageshow',()=>{if(enter.classList.contains('hide')&&!stream)setTimeout(()=>initGesture(true),400)});addEventListener('pagehide',()=>{stopCamera()});
-})();
-</script>
+    function showError(){
+      if(stopped)return;
+      stopped=true;
+      status.textContent='页面加载失败，请刷新后重试';
+      status.className='show';
+    }
+
+    function render(){
+      if(stopped||completed!==files.length)return;
+      stopped=true;
+      var page=chunks.join('');
+      document.open('text/html','replace');
+      document.write(page);
+      document.close();
+    }
+
+    function load(index,attempt){
+      var xhr=new XMLHttpRequest();
+      xhr.open('GET',files[index]+'?v='+version,true);
+      if(xhr.overrideMimeType)xhr.overrideMimeType('text/plain; charset=utf-8');
+      xhr.timeout=12000;
+      xhr.onreadystatechange=function(){
+        if(xhr.readyState!==4||stopped)return;
+        if(xhr.status>=200&&xhr.status<300){
+          chunks[index]=xhr.responseText;
+          completed++;
+          render();
+        }else if(attempt<2){
+          setTimeout(function(){load(index,attempt+1);},350*(attempt+1));
+        }else{
+          showError();
+        }
+      };
+      xhr.onerror=function(){
+        if(stopped)return;
+        if(attempt<2)setTimeout(function(){load(index,attempt+1);},350*(attempt+1));
+        else showError();
+      };
+      xhr.ontimeout=xhr.onerror;
+      xhr.send(null);
+    }
+
+    for(var i=0;i<files.length;i++)load(i,0);
+  })();
+  </script>
 </body>
 </html>
