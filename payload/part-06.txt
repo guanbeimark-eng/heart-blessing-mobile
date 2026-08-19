@@ -1,0 +1,160 @@
+ = d.alpha;
+      ctx.fillStyle = COLORS[d.colorIndex].core;
+      ctx.fillRect(d.x - d.size * 0.42, d.y - speedStretch, Math.max(0.65, d.size * 0.84), speedStretch);
+      ctx.fillRect(d.x - d.size * 0.60, d.y - d.size * 0.25, d.size * 1.20, Math.max(0.8, d.size * 1.15));
+    }
+
+    for (let i = 0; i < splashes.length; i++) {
+      const s = splashes[i];
+      const alpha = clamp(s.life / s.maxLife, 0, 1);
+      drawCore(s.x, s.y, s.size, s.colorIndex, alpha * 0.86, 0.82);
+    }
+
+    ctx.globalAlpha = 1;
+    ctx.globalCompositeOperation = 'source-over';
+  }
+
+  function drawSettledHeartParticles(time) {
+    ctx.globalCompositeOperation = 'lighter';
+
+    for (let i = 0; i < heartParticles.length; i++) {
+      const p = heartParticles[i];
+      if (!p.detached || !p.settled) continue;
+
+      // 真正从爱心脱落的粒子落地后保留在底部粒子池中，粒子数量在视觉上是守恒的。
+      p.x = p.settleX + Math.sin(time * 0.00115 + p.phase) * 0.36;
+      p.y = p.settleY + Math.cos(time * 0.00145 + p.phase) * 0.20;
+      const flicker = 0.80 + Math.sin(time * 0.0030 + p.phase) * 0.20;
+      const size = p.size * 0.68;
+      const alpha = p.alpha * flicker * 0.74;
+
+      if (p.glow) drawGlow(p.x, p.y, size * 3.8, alpha * 0.11, 1);
+      drawCore(p.x, p.y, size, p.colorIndex, alpha, p.shape, 1);
+    }
+
+    ctx.globalAlpha = 1;
+    ctx.globalCompositeOperation = 'source-over';
+  }
+
+  function bucketHeartParticles() {
+    for (let i = 0; i < depthBuckets.length; i++) depthBuckets[i].length = 0;
+    for (let i = 0; i < heartParticles.length; i++) {
+      const p = heartParticles[i];
+      if (p.detached) continue;
+      const index = clamp((p.depth01 * depthBuckets.length) | 0, 0, depthBuckets.length - 1);
+      depthBuckets[index].push(p);
+    }
+  }
+
+  function gatherPinkMix(time) {
+    if (!gatherStartsPink) return 0;
+    const fade = smoothstep((time - stateStartedAt) / CONFIG.gatherFadeGrayDuration);
+    return 1 - fade;
+  }
+
+  function floorPinkMix(time) {
+    if (state === 'COLORIZE') {
+      const progress = smoothstep((time - stateStartedAt) / CONFIG.colorizeDuration);
+      return smoothstep((progress - 0.10) / 0.90);
+    }
+    if (state === 'HOLD' || state === 'EXPLODE') return 1;
+    if (state === 'GATHER') return gatherPinkMix(time);
+    return 0;
+  }
+
+  function particlePinkMix(p, time) {
+    if (state === 'COLORIZE') {
+      const progress = smoothstep((time - stateStartedAt) / CONFIG.colorizeDuration);
+      const local = clamp((progress - p.colorDelay) / Math.max(0.001, 1 - p.colorDelay), 0, 1);
+      return smoothstep(local);
+    }
+    if (state === 'HOLD' || state === 'EXPLODE') return 1;
+    if (state === 'GATHER') return gatherPinkMix(time);
+    return 0;
+  }
+
+  function drawHeart(time, sceneAlpha) {
+    bucketHeartParticles();
+    ctx.globalCompositeOperation = 'lighter';
+
+    for (let b = 0; b < depthBuckets.length; b++) {
+      const bucket = depthBuckets[b];
+      for (let i = 0; i < bucket.length; i++) {
+        const p = bucket[i];
+        const pinkMix = particlePinkMix(p, time);
+        const frontBoost = 0.72 + p.depth01 * 0.55;
+        const size = p.size * p.perspective * frontBoost;
+        const flicker = 0.78 + Math.sin(time * (0.0025 + p.wobbleSpeed * 0.22) + p.phase) * 0.22;
+        const alpha = clamp(p.alpha * flicker * (0.72 + p.depth01 * 0.43) * sceneAlpha, 0, 1);
+
+        if (p.glow) drawGlow(p.x, p.y, size * 4.7, alpha * (p.target.edge ? 0.22 : 0.12), pinkMix);
+        drawCore(p.x, p.y, size, p.colorIndex, alpha, p.shape, pinkMix);
+      }
+    }
+
+    ctx.globalAlpha = 1;
+    ctx.globalCompositeOperation = 'source-over';
+  }
+
+  function measureSpacedText(text, spacing) {
+    const chars = Array.from(text);
+    let width = 0;
+    for (let i = 0; i < chars.length; i++) {
+      width += ctx.measureText(chars[i]).width;
+      if (i < chars.length - 1) width += spacing;
+    }
+    return { chars, width };
+  }
+
+  function paintSpacedText(chars, totalWidth, spacing, mode) {
+    let cursor = -totalWidth / 2;
+    for (let i = 0; i < chars.length; i++) {
+      const char = chars[i];
+      const charWidth = ctx.measureText(char).width;
+      if (mode === 'stroke') ctx.strokeText(char, cursor, 0);
+      else ctx.fillText(char, cursor, 0);
+      cursor += charWidth + spacing;
+    }
+  }
+
+  function drawBlessing(time) {
+    if (state !== 'HOLD' || !blessingStartedAt) return;
+
+    const elapsed = time - blessingStartedAt - CONFIG.blessingDelay;
+    if (elapsed < 0) return;
+
+    const x = centerX;
+    const compactLandscape = mobile && W > H * 1.35 && H < 560;
+
+    // 字号在上一版基础上小幅提升：手机端约 15.5–17.5px；
+    // 大尺寸竖屏与桌面约 18–23.5px，仍保持文字低于粒子爱心主体。
+    const fontSize = compactLandscape
+      ? clamp(H * 0.038, 13.2, 15)
+      : mobile
+        ? clamp(W * 0.041, ...CONFIG.blessingFontMobile)
+        : clamp(Math.min(W, H) * 0.0215, ...CONFIG.blessingFontDesktop);
+    const letterSpacing = compactLandscape
+      ? 2.1
+      : mobile
+        ? clamp(fontSize * 0.155, 2.25, 2.55)
+        : clamp(fontSize * 0.18, 2.9, 3.45);
+
+    // 位置采用“粒子池下沿 + 底部安全区”双重约束。
+    // 目标落在屏幕高度约 89.5%–91.5% 的下方留白区，既属于页面底部，
+    // 又与上方粒子池、雨滴飞溅保持清楚间隔。
+    const safeBottom = parseFloat(
+      getComputedStyle(document.documentElement).getPropertyValue('--safe-bottom')
+    ) || 0;
+    const poolBottom = floorY + floorRY * 1.30 + fontSize * (compactLandscape ? 0.24 : 0.35);
+    const bottomBoundary = H - safeBottom - (compactLandscape ? 18 : mobile ? 28 : 34);
+    const available = Math.max(0, bottomBoundary - poolBottom);
+    const lowerSpaceRatio = compactLandscape ? 0.55 : mobile ? 0.50 : 0.46;
+    const balancedY = poolBottom + available * lowerSpaceRatio;
+    const bandTop = H * CONFIG.blessingYBand[0];
+    const bandBottom = H * CONFIG.blessingYBand[1];
+    const preferredY = clamp(balancedY, bandTop, bandBottom);
+    const minGap = compactLandscape ? 20 : mobile ? 36 : 48;
+    const minY = poolBottom + minGap;
+    const maxY = bottomBoundary - fontSize * 0.12;
+    const y = minY <= maxY ? clamp(preferredY, minY, maxY) : maxY;
+    const lineWindow = CONFIG.
