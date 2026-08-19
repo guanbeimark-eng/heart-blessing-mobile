@@ -1,0 +1,209 @@
+ttled = false;
+      this.settleX = this.x;
+      this.settleY = this.y;
+      this.localStart = 0;
+
+      this.tx = this.x;
+      this.ty = this.y;
+      this.projectedZ = 0;
+      this.perspective = 1;
+      this.depth01 = 0.5;
+    }
+
+    resetForGather(time) {
+      this.arrived = false;
+      this.detached = false;
+      this.settled = false;
+      this.localStart = time + rand(0, 1120);
+    }
+
+    detachForDrip() {
+      if (this.detached) return false;
+      this.detached = true;
+      this.settled = false;
+      this.arrived = false;
+      this.vx = 0;
+      this.vy = 0;
+      return true;
+    }
+
+    updateTarget(time, beat) {
+      const p = project(this.target, beat, time);
+      this.tx = p.x;
+      this.ty = p.y;
+      this.projectedZ = p.z;
+      this.perspective = p.perspective;
+      this.depth01 = p.depth01;
+    }
+
+    lockToTarget(time) {
+      const wx = Math.sin(time * this.wobbleSpeed + this.phase) * this.wobble * 0.55;
+      const wy = Math.cos(time * this.wobbleSpeed * 1.17 + this.phase) * this.wobble;
+      this.x = this.tx + wx;
+      this.y = this.ty + wy;
+    }
+
+    gather(time, step, beat) {
+      this.updateTarget(time, beat);
+
+      if (time < this.localStart) {
+        this.y += Math.sin(time * 0.0018 + this.phase) * 0.035 * step;
+        return;
+      }
+
+      if (this.arrived) {
+        this.lockToTarget(time);
+        return;
+      }
+
+      let dx = this.tx - this.x;
+      let dy = this.ty - this.y;
+      const dist = Math.hypot(dx, dy) || 1;
+
+      if (dist < CONFIG.arriveDistance) {
+        this.arrived = true;
+        this.vx = 0;
+        this.vy = 0;
+        this.lockToTarget(time);
+        return;
+      }
+
+      dx /= dist;
+      dy /= dist;
+      const force = this.accel * clamp(dist / 125, 0.28, 1.60);
+      this.vx += dx * force * step;
+      this.vy += dy * force * step;
+
+      if (dist > 28) {
+        this.vx += rand(-0.010, 0.010) * step;
+        this.vy += rand(-0.010, 0.010) * step;
+      }
+
+      const speed = Math.hypot(this.vx, this.vy);
+      if (speed > this.maxSpeed) {
+        const ratio = this.maxSpeed / speed;
+        this.vx *= ratio;
+        this.vy *= ratio;
+      }
+
+      const friction = Math.pow(this.friction, step);
+      this.vx *= friction;
+      this.vy *= friction;
+      this.x += this.vx * step;
+      this.y += this.vy * step;
+    }
+
+    hold(time, beat) {
+      this.updateTarget(time, beat);
+      this.lockToTarget(time);
+    }
+
+    explode() {
+      let dx = this.x - centerX;
+      let dy = this.y - centerY;
+      const d = Math.hypot(dx, dy) || 1;
+      dx /= d;
+      dy /= d;
+      const force = rand(...CONFIG.explodeForce);
+      this.vx = dx * force + rand(-3.4, 3.4);
+      this.vy = dy * force + rand(-5.2, 2.6);
+      this.arrived = false;
+    }
+
+    updateExplosion(step) {
+      this.vx *= Math.pow(0.991, step);
+      this.vy *= Math.pow(0.994, step);
+      this.vy += CONFIG.explodeGravity * step;
+      this.x += this.vx * step;
+      this.y += this.vy * step;
+
+      const bottom = floorY + floorRY * 0.74;
+      if (this.y > bottom) {
+        this.y = bottom;
+        this.vy *= -0.22;
+        this.vx *= 0.69;
+      }
+    }
+  }
+
+  class FloorParticle {
+    constructor() {
+      this.angle = rand(0, TAU);
+      this.ring = Math.random() < 0.78;
+      this.radius = this.ring ? rand(0.50, 1.09) : Math.sqrt(Math.random()) * 0.76;
+      this.offsetY = rand(-5, 7);
+      this.speed = rand(-0.000050, 0.000050);
+      this.phase = rand(0, TAU);
+      this.wobble = rand(0.5, 3.2);
+      this.colorIndex = chooseColor();
+      const range = mobile ? CONFIG.floorParticleMobile : CONFIG.floorParticleDesktop;
+      this.size = rand(...range);
+      if (Math.random() < 0.08) this.size *= rand(1.25, 1.65);
+      this.alpha = this.ring ? rand(0.42, 0.96) : rand(0.22, 0.72);
+      this.glow = Math.random() < 0.15;
+      this.x = centerX;
+      this.y = floorY;
+      this.depth = 0;
+    }
+
+    update(time, deltaMs) {
+      this.angle += this.speed * deltaMs;
+      const c = Math.cos(this.angle);
+      const s = Math.sin(this.angle);
+      this.x = centerX + c * floorRX * this.radius + Math.sin(time * 0.0012 + this.phase) * this.wobble;
+      this.y = floorY + s * floorRY * this.radius + this.offsetY + Math.cos(time * 0.0016 + this.phase) * 0.8;
+      this.depth = (s + 1) * 0.5;
+    }
+  }
+
+  class Drip {
+    constructor(source, structural = false) {
+      this.structural = structural;
+      this.owner = structural ? source : null;
+      this.x = source.x + rand(-2.2, 2.2);
+      this.y = source.y + rand(-1.5, 3.5);
+      this.vx = rand(-0.20, 0.20) + Math.sin(rotationY) * rand(-0.05, 0.05);
+      this.vy = structural ? rand(0.52, 1.45) : rand(0.65, 2.05);
+      this.gravity = structural ? rand(0.028, 0.058) : rand(0.032, 0.070);
+      this.size = structural
+        ? clamp(source.size * source.perspective * rand(0.82, 1.08), 0.85, mobile ? 2.45 : 3.10)
+        : rand(0.65, mobile ? 1.70 : 2.05);
+      this.length = structural ? rand(1.8, 5.6) : rand(1.2, 4.8);
+      this.alpha = structural ? rand(0.82, 1) : rand(0.42, 0.94);
+      this.colorIndex = source.colorIndex;
+      this.phase = rand(0, TAU);
+      this.impactY = floorY + rand(-9, 10);
+    }
+
+    update(step) {
+      this.vx += Math.sin(this.y * 0.012 + this.phase) * 0.0016 * step;
+      this.vy += this.gravity * step;
+      this.x += this.vx * step;
+      this.y += this.vy * step;
+
+      // 真实脱落粒子沿着雨滴一起下落。它不再参与爱心绘制，因此爱心会非常缓慢地出现缺口。
+      if (this.owner) {
+        this.owner.x = this.x;
+        this.owner.y = this.y;
+        this.owner.settled = false;
+      }
+
+      return this.y >= this.impactY;
+    }
+  }
+
+  class Splash {
+    constructor(x, y, colorIndex) {
+      this.x = x;
+      this.y = y;
+      this.vx = rand(-1.15, 1.15);
+      this.vy = rand(-1.8, -0.25);
+      this.gravity = rand(0.055, 0.095);
+      this.life = rand(18, 42);
+      this.maxLife = this.life;
+      this.size = rand(0.45, 1.25);
+      this.colorIndex = colorIndex;
+    }
+
+    update(step) {
+      this.life 
